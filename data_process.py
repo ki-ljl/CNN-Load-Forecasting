@@ -16,50 +16,49 @@ CNN_PATH = 'model/CNN.pkl'
 
 def load_data(file_name):
     df = pd.read_csv('data/' + file_name, encoding='gbk')
-    columns = df.columns
     df.fillna(df.mean(), inplace=True)
-    MAX = np.max(df[columns[1]])
-    MIN = np.min(df[columns[1]])
-    df[columns[1]] = (df[columns[1]] - MIN) / (MAX - MIN)
 
-    return df, MAX, MIN
+    return df
 
 
 def nn_seq(file_name, B):
     print('data processing...')
-    data, MAX, MIN = load_data(file_name)
-    load = data[data.columns[1]]
-    load = load.tolist()
-    load = torch.FloatTensor(load).view(-1)
-    data = data.values.tolist()
-    seq = []
-    for i in range(len(data) - 30):
-        train_seq = []
-        train_label = []
-        for j in range(i, i + 24):
-            train_seq.append(load[j])
-        for c in range(2, 8):
-            train_seq.append(data[i + 24][c])
-        train_label.append(load[i + 24])
-        train_seq = torch.FloatTensor(train_seq).view(-1)
-        train_label = torch.FloatTensor(train_label).view(-1)
-        seq.append((train_seq, train_label))
-    # print(seq[:5])
+    dataset = load_data(file_name)
+    # split
+    train = dataset[:int(len(dataset) * 0.6)]
+    val = dataset[int(len(dataset) * 0.6):int(len(dataset) * 0.8)]
+    test = dataset[int(len(dataset) * 0.8):len(dataset)]
+    m, n = np.max(train[train.columns[1]]), np.min(train[train.columns[1]])
 
-    Dtr = seq[0:int(len(seq) * 0.7)]
-    Dte = seq[int(len(seq) * 0.7):len(seq)]
+    def process(data):
+        load = data[data.columns[1]]
+        data = data.values.tolist()
+        load = (load - n) / (m - n)
+        load = load.tolist()
+        seq = []
+        for i in range(len(data) - 30):
+            train_seq = []
+            train_label = []
+            for j in range(i, i + 24):
+                train_seq.append(load[j])
+            for c in range(2, 8):
+                train_seq.append(data[i + 24][c])
+            train_label.append(load[i + 24])
+            train_seq = torch.FloatTensor(train_seq).view(-1)
+            train_label = torch.FloatTensor(train_label).view(-1)
+            seq.append((train_seq, train_label))
 
-    train_len = int(len(Dtr) / B) * B
-    test_len = int(len(Dte) / B) * B
-    Dtr, Dte = Dtr[:train_len], Dte[:test_len]
+        seq = MyDataset(seq)
 
-    train = MyDataset(Dtr)
-    test = MyDataset(Dte)
+        seq = DataLoader(dataset=seq, batch_size=B, shuffle=True, num_workers=0, drop_last=True)
 
-    Dtr = DataLoader(dataset=train, batch_size=B, shuffle=True, num_workers=0)
-    Dte = DataLoader(dataset=test, batch_size=B, shuffle=True, num_workers=0)
+        return seq
 
-    return Dtr, Dte, MAX, MIN
+    Dtr = process(train)
+    Val = process(val)
+    Dte = process(test)
+
+    return Dtr, Val, Dte, m, n
 
 
 class MyDataset(Dataset):

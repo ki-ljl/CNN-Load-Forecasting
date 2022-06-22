@@ -6,6 +6,7 @@
 @Motto：Hungry And Humble
 
 """
+import copy
 from itertools import chain
 
 import numpy as np
@@ -41,37 +42,61 @@ class CNN(nn.Module):
         x = self.Linear1(x)
         x = self.relu(x)
         x = self.Linear2(x)
+
         return x
 
 
-def CNN_train(file_name, B):
-    Dtr, Dte, MAX, MIN = nn_seq(file_name, B)
-    epochs = 10
+def get_val_loss(model, Val):
+    model.eval()
+    loss_function = nn.MSELoss().to(device)
+    val_loss = []
+    for (seq, label) in Val:
+        with torch.no_grad():
+            seq = seq.to(device)
+            label = label.to(device)
+            y_pred = model(seq.reshape(B, 1, 30))
+            loss = loss_function(y_pred, label)
+            val_loss.append(loss.item())
+
+    return np.mean(val_loss)
+
+
+def train():
     model = CNN(B).to(device)
     loss_function = nn.MSELoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     print('training...')
+    epochs = 30
+    min_epochs = 10
+    best_model = None
+    min_val_loss = 5
     for epoch in range(epochs):
-        cnt = 0
+        train_loss = []
         for batch_idx, (seq, target) in enumerate(Dtr, 0):
-            cnt = cnt + 1
             seq, target = seq.to(device), target.to(device)
             optimizer.zero_grad()
             # input size（batch size, channel, series length）
             y_pred = model(seq.reshape(B, 1, 30))
             # print('y_pred=', y_pred, 'target=', target)
             loss = loss_function(y_pred, target)
+            train_loss.append(loss.item())
             loss.backward()
             optimizer.step()
-            if cnt % 50 == 0:
-                print(f'epoch: {epoch:3} loss: {loss.item():10.8f}')
-        print(f'epoch: {epoch:3} loss: {loss.item():10.10f}')
 
-    state = {'model': model.state_dict(), 'optimizer': optimizer.state_dict()}
+        # validation
+        val_loss = get_val_loss(model, Val)
+        if epoch + 1 >= min_epochs and val_loss < min_val_loss:
+            min_val_loss = val_loss
+            best_model = copy.deepcopy(model)
+
+        print('epoch {:03d} train_loss {:.8f} val_loss {:.8f}'.format(epoch, np.mean(train_loss), val_loss))
+        model.train()
+
+    state = {'model': best_model.state_dict(), 'optimizer': optimizer.state_dict()}
     torch.save(state, CNN_PATH)
 
 
-def CNN_predict(cnn, test_seq):
+def predict(cnn, test_seq):
     pred = []
     y = []
     for batch_idx, (seq, target) in enumerate(test_seq, 0):
@@ -81,27 +106,25 @@ def CNN_predict(cnn, test_seq):
             y.extend(target)
             pred.extend(cnn(seq.reshape(cnn.B, 1, 30)).tolist())
 
-    y, pred = np.array([y]), np.array([pred])
+    y, pred = np.array(y), np.array(pred)
     return y, pred
 
 
 def test():
-    file_name = 'anqiudata.csv'
-    B = 15
-    Dtr, Dte, MAX, MIN = nn_seq(file_name, B)
     cnn = CNN(B).to(device)
     cnn.load_state_dict(torch.load(CNN_PATH)['model'])
     cnn.eval()
-    test_y, pred = CNN_predict(cnn, Dte)
+    test_y, pred = predict(cnn, Dte)
 
     test_y = (MAX - MIN) * test_y + MIN
     pred = (MAX - MIN) * pred + MIN
-    print('accuracy:', get_mape(test_y.flatten(), pred))
+    print('mape:', get_mape(test_y, pred))
 
 
 if __name__ == '__main__':
-    file_name = 'anqiudata.csv'
+    file_name = 'data.csv'
     B = 15
-    # CNN_train(file_name, B)
+    Dtr, Val, Dte, MAX, MIN = nn_seq(file_name, B)
+    train()
     test()
 
