@@ -12,36 +12,43 @@ from itertools import chain
 import numpy as np
 import torch
 import torch.nn as nn
+from matplotlib import pyplot as plt
+from scipy.interpolate import make_interp_spline
+
 from data_process import nn_seq, device, CNN_PATH, get_mape
+
+B, input_size = 15, 7
 
 
 class CNN(nn.Module):
-    def __init__(self, B):
+    def __init__(self):
         super(CNN, self).__init__()
         self.B = B
         self.relu = nn.ReLU(inplace=True)
         self.conv1 = nn.Sequential(
-            nn.Conv1d(in_channels=1, out_channels=64, kernel_size=2),  # 30 - 2 + 1 = 29
+            nn.Conv1d(in_channels=input_size, out_channels=64, kernel_size=2),  # 24 - 2 + 1 = 23
             nn.ReLU(),
-            nn.MaxPool1d(kernel_size=2, stride=1),  # 29 - 2 + 1 = 28
+            nn.MaxPool1d(kernel_size=2, stride=1),  # 23 - 2 + 1 = 22
         )
         self.conv2 = nn.Sequential(
-            nn.Conv1d(in_channels=64, out_channels=128, kernel_size=2),  # 28 - 2 + 1 = 27
+            nn.Conv1d(in_channels=64, out_channels=128, kernel_size=2),  # 22 - 2 + 1 = 21
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=1),  # 27 - 2 + 1 = 26
+            nn.MaxPool2d(kernel_size=2, stride=1),  # 21 - 2 + 1 = 20
         )
-        self.Linear1 = nn.Linear(self.B * 127 * 26, self.B * 50)
+        self.Linear1 = nn.Linear(self.B * 127 * 20, self.B * 50)
         self.Linear2 = nn.Linear(self.B * 50, self.B)
 
     def forward(self, x):
+        # (batch size, channel, series length)
+        x = x.permute(0, 2, 1)
         x = self.conv1(x)
         x = self.conv2(x)
-        # print(x.size())
         x = x.view(-1)
-        # print(x.size())
         x = self.Linear1(x)
         x = self.relu(x)
         x = self.Linear2(x)
+
+        x = x.view(x.shape[0], -1)
 
         return x
 
@@ -54,15 +61,15 @@ def get_val_loss(model, Val):
         with torch.no_grad():
             seq = seq.to(device)
             label = label.to(device)
-            y_pred = model(seq.reshape(B, 1, 30))
+            y_pred = model(seq)
             loss = loss_function(y_pred, label)
             val_loss.append(loss.item())
 
     return np.mean(val_loss)
 
 
-def train():
-    model = CNN(B).to(device)
+def train(Dtr, Val):
+    model = CNN().to(device)
     loss_function = nn.MSELoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     print('training...')
@@ -75,8 +82,7 @@ def train():
         for batch_idx, (seq, target) in enumerate(Dtr, 0):
             seq, target = seq.to(device), target.to(device)
             optimizer.zero_grad()
-            # input size（batch size, channel, series length）
-            y_pred = model(seq.reshape(B, 1, 30))
+            y_pred = model(seq)
             # print('y_pred=', y_pred, 'target=', target)
             loss = loss_function(y_pred, target)
             train_loss.append(loss.item())
@@ -96,35 +102,44 @@ def train():
     torch.save(state, CNN_PATH)
 
 
-def predict(cnn, test_seq):
+def test(Dte, m, n):
+    cnn = CNN().to(device)
+    cnn.load_state_dict(torch.load(CNN_PATH)['model'])
+    cnn.eval()
     pred = []
     y = []
-    for batch_idx, (seq, target) in enumerate(test_seq, 0):
+    for batch_idx, (seq, target) in enumerate(Dte, 0):
         seq = seq.to(device)
         with torch.no_grad():
             target = list(chain.from_iterable(target.tolist()))
             y.extend(target)
-            pred.extend(cnn(seq.reshape(cnn.B, 1, 30)).tolist())
+            pred.extend(cnn(seq).tolist())
 
     y, pred = np.array(y), np.array(pred)
-    return y, pred
+
+    y = (m - n) * y + n
+    pred = (m - n) * pred + n
+    print('mape:', get_mape(y, pred))
+    # plot
+    x = [i for i in range(1, 151)]
+    x_smooth = np.linspace(np.min(x), np.max(x), 900)
+    y_smooth = make_interp_spline(x, y[150:300])(x_smooth)
+    plt.plot(x_smooth, y_smooth, c='green', marker='*', ms=1, alpha=0.75, label='true')
+
+    y_smooth = make_interp_spline(x, pred[150:300])(x_smooth)
+    plt.plot(x_smooth, y_smooth, c='red', marker='o', ms=1, alpha=0.75, label='pred')
+    plt.grid(axis='y')
+    plt.legend()
+    plt.show()
 
 
-def test():
-    cnn = CNN(B).to(device)
-    cnn.load_state_dict(torch.load(CNN_PATH)['model'])
-    cnn.eval()
-    test_y, pred = predict(cnn, Dte)
-
-    test_y = (MAX - MIN) * test_y + MIN
-    pred = (MAX - MIN) * pred + MIN
-    print('mape:', get_mape(test_y, pred))
+def main():
+    file_name = 'data.csv'
+    Dtr, Val, Dte, MAX, MIN = nn_seq(file_name, B)
+    train(Dtr, Val)
+    test(Dte, MAX, MIN)
 
 
 if __name__ == '__main__':
-    file_name = 'data.csv'
-    B = 15
-    Dtr, Val, Dte, MAX, MIN = nn_seq(file_name, B)
-    train()
-    test()
+    main()
 

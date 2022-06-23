@@ -36,15 +36,16 @@ def nn_seq(file_name, B):
         load = (load - n) / (m - n)
         load = load.tolist()
         seq = []
-        for i in range(len(data) - 30):
+        for i in range(len(data) - 24):
             train_seq = []
             train_label = []
             for j in range(i, i + 24):
-                train_seq.append(load[j])
-            for c in range(2, 8):
-                train_seq.append(data[i + 24][c])
+                x = [load[j]]
+                for c in range(2, 8):
+                    x.append(data[j][c])
+                train_seq.append(x)
             train_label.append(load[i + 24])
-            train_seq = torch.FloatTensor(train_seq).view(-1)
+            train_seq = torch.FloatTensor(train_seq)
             train_label = torch.FloatTensor(train_label).view(-1)
             seq.append((train_seq, train_label))
 
